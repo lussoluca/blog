@@ -1,0 +1,158 @@
+---
+title: Profiling AI provider calls in Drupal
+date: '2026-08-14'
+excerpt: WebProfiler now collects every call the AI module makes to a provider, with timings, tokens, guardrail verdicts and tool exchanges. Here is what it records and how it stays out of the AI module's way.
+tags: ['drupal', 'webprofiler', 'ai', 'observability']
+---
+
+<script>
+	import Figure from '$lib/components/Figure.svelte';
+</script>
+
+Add a chatbot to a Drupal site and something uncomfortable happens: the slowest, most expensive part of the request becomes the part you know the least about. The page took six seconds. Which of those seconds belonged to a provider? How many calls were there, really? Which model answered? How many tokens did you pay for, and how many of them were a guardrail checking the question before anyone answered it?
+
+Until now the honest answer in Drupal was to add logging and guess. [WebProfiler](https://www.drupal.org/project/webprofiler) has had a panel per subsystem for years (database, cache, events, Views) and AI was the obvious hole. [Merge request !45](https://git.drupalcode.org/project/webprofiler/-/merge_requests/45) closes it with a new `AiDataCollector` and an AI panel.
+
+<Figure
+	src="/images/posts/webprofiler-ai/toolbar-summary.png"
+	alt="The WebProfiler toolbar on a Drupal page with an AI chatbot, showing an AI cell expanded into a summary of four calls totalling 6020.53 ms and 438 tokens"
+	caption="The new toolbar cell: four provider calls, 6020.53 ms, 438 tokens, four guardrail runs and one tool call, for a page that looks like it did one thing."
+	wide
+/>
+
+That summary is the whole point. The page asked one question. Behind it there were four calls to `openai` and `gpt-5.2`, four guardrail evaluations, and a tool the provider decided to invoke. Three quarters of the latency was work nobody wrote in a controller.
+
+## Collecting without depending
+
+The AI module is an optional dependency of WebProfiler, which shapes almost every decision in the implementation. The collector is registered only when the module is there:
+
+```php
+// src/WebprofilerServiceProvider.php
+if (isset($modules['ai'])) {
+  $container->register('webprofiler.ai',
+    'Drupal\webprofiler\DataCollector\AiDataCollector')
+    ->addTag('event_subscriber')
+    ->addTag('data_collector', [
+      'template' => '@webprofiler/Collector/ai.html.twig',
+      'id' => 'ai',
+      'label' => 'AI',
+      'priority' => 475,
+    ]);
+}
+```
+
+Registration is guarded, but the class itself has to be loadable and compilable whether or not the AI module exists, so `AiDataCollector` never references an AI module class. Events are subscribed by name as plain strings, and their payloads are inspected by duck typing:
+
+```php
+private const EVENT_PRE_GENERATE = 'ai.pre_generate_response';
+private const EVENT_POST_GENERATE = 'ai.post_generate_response';
+private const EVENT_POST_STREAMING = 'ai.post_streaming_response';
+private const EVENT_EXCEPTION = 'Drupal\ai\Event\AiExceptionEvent';
+```
+
+Those four events are dispatched by `Drupal\ai\Plugin\ProviderProxy`, which every provider call passes through. That is the seam that makes the panel possible: one interception point, regardless of which provider plugin ends up doing the work.
+
+## Subscribing last, on purpose
+
+Every subscriber is registered at priority `-1000`:
+
+```php
+public static function getSubscribedEvents(): array {
+  return [
+    self::EVENT_PRE_GENERATE => ['onPreGenerate', -1000],
+    self::EVENT_POST_GENERATE => ['onPostGenerate', -1000],
+    self::EVENT_POST_STREAMING => ['onPostStreaming', -1000],
+    self::EVENT_EXCEPTION => ['onException', -1000],
+  ];
+}
+```
+
+Running last is what makes the data trustworthy. Guardrails rewrite input. Failover swaps the provider and the model. Any contrib module can alter the configuration on its way to the API. A collector that listened first would faithfully record a request that was never sent. Listening last records what actually went out and what actually came back.
+
+## A call is a span with an ending
+
+Each `pre_generate` opens a call; `post_generate` closes it, `post_streaming` closes a streamed one, and the exception event closes a failed one. Requests that never reach an ending are the interesting part, so `collect()` resolves them at the end of the request instead of dropping them:
+
+```php
+foreach ($this->data['calls'] as $id => $call) {
+  if ($call['status'] === 'pending') {
+    $this->data['calls'][$id]['status'] = $call['streamed'] ? 'unconsumed' : 'short_circuited';
+  }
+}
+```
+
+Two real failure modes get names here. `short_circuited` means something, usually a guardrail, produced an output during the pre-generate phase, so the provider was never asked. `unconsumed` means a streamed response was created and nobody ever read the iterator. Both look like success in a log file and like a mystery in a latency graph.
+
+Calls also carry a `parent_id` taken from the event's request parent id, so nested calls (a chatbot pipeline calling a sub-agent, a tool call triggering another generation) form a tree. Walking that tree stops on unknown parents and on cycles, which a buggy provider is entirely capable of producing.
+
+One more detail that only shows up in production: the collected values are snapshotted into VarDumper `Data` objects while the request is running, rather than kept as live references or cloned with the usual trait. Configuration and metadata coming out of an AI provider routinely contain closures, and a closure reaching `kernel.terminate` is a serialization exception in the profiler storage rather than a bug you can see.
+
+## Four tabs
+
+The panel splits into Metrics, Calls, Guardrails and Tools.
+
+**Metrics** is the budget view: how many calls, how many failed, total time, and tokens broken down into input, output, reasoning and cached, plus a breakdown per provider and per model, which is how you find out that failover quietly moved you to a different model.
+
+<Figure
+	src="/images/posts/webprofiler-ai/panel-metrics.png"
+	alt="The Metrics tab of the AI collector, listing totals for calls, failed calls, total time, tokens by type, guardrails and tool calls, followed by calls per provider and calls per model"
+	caption="Metrics: totals, token breakdown by type, and calls grouped by provider and by model."
+	wide
+/>
+
+**Calls** is one block per call, in order, with status, provider, model, operation type, duration, whether it was streamed, the request thread id, tags, token usage, the messages exchanged and the raw payload.
+
+<Figure
+	src="/images/posts/webprofiler-ai/panel-calls.png"
+	alt="The Calls tab showing call #1 to openai gpt-5.2 in 1684.6859 ms, with status, operation type, request thread id, tags, token usage and the exchanged messages"
+	caption="Calls: the first call in this request is not the user's question at all. It is a topic guardrail asking the model to classify the prompt."
+	wide
+/>
+
+The messages table is where the surprises live. In the request above, call #1 spends 152 tokens asking the model to return a JSON list of topics present in the text. The user's actual question is a passenger inside a guardrail prompt.
+
+Tags are worth reading too. They record where the call came from, so a call tagged `chat, chat_generation, ai_api_explorer` is somebody poking the API explorer, not your chatbot, and `Model that answered` is reported separately from the requested model.
+
+<Figure
+	src="/images/posts/webprofiler-ai/panel-call-detail.png"
+	alt="A call detail block showing tags chat, chat_generation and ai_api_explorer, a requested model of gpt-5.2, a model that answered of gpt-5.2-2025-12-11, and 31 reasoning tokens"
+	caption="Requested model and answering model are different values, and reasoning tokens are counted separately."
+	wide
+/>
+
+**Guardrails** lists every evaluation with its mode (`pre` or `post`), result, whether it asked to stop, its score, its message and its context. The count of guardrails that asked to stop sits in Metrics as its own number, because a blocked request and a slow request need very different fixes.
+
+<Figure
+	src="/images/posts/webprofiler-ai/panel-guardrails.png"
+	alt="The Guardrails tab listing four Restrict to Topic evaluations across calls 2 and 4, each with mode, result, stop flag, message and context"
+	caption="Guardrails: two calls, each evaluated pre and post, with the context array the guardrail produced."
+	wide
+/>
+
+**Tools** separates what you offered from what the provider asked for. The offered list shows each tool definition and its JSON schema; the requested list shows the call id, the tool name and the arguments the model chose.
+
+<Figure
+	src="/images/posts/webprofiler-ai/panel-tools.png"
+	alt="The Tools tab, with an offered tool get_drupal_module_info and its parameter schema, and a requested tool invocation with id and arguments module: views"
+	caption="Tools: the model was offered get_drupal_module_info, and asked for it with the argument module: views."
+	wide
+/>
+
+## Reading the request again
+
+With the panel open, the six-second page from the first screenshot decomposes without guesswork: four calls, one of them the answer, two of them a topic guardrail running before and after, one of them a tool round trip. 381 input tokens against 57 output tokens. No failures, no guardrail stops, one tool invocation.
+
+None of that is a performance fix on its own. It is the thing you need before a performance fix stops being a guess, and the reason WebProfiler exists in the first place.
+
+## Trying it
+
+The collector is on the `11.0.x` branch of WebProfiler. Enable the module, make sure the AI panel is active in the toolbar (it is on by default in `webprofiler.settings`), and load a page that talks to a provider:
+
+```yaml
+active_toolbar_items:
+  ai: ai
+  ajax: ajax
+  blocks: blocks
+```
+
+Then read the toolbar. If the number of calls surprises you, that is the panel doing its job.

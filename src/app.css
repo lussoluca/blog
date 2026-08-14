@@ -1,0 +1,247 @@
+@import 'tailwindcss';
+
+/* The wdth cut carries both the weight and the width axis, which the display
+   headings use to tighten as they get bigger. */
+@import '@fontsource-variable/bricolage-grotesque/wdth.css';
+@import '@fontsource-variable/newsreader';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Instrument-panel palette: a cool grey ground with two "trace" colours,
+ * ultramarine for links and structure, orange for measured values.
+ */
+:root {
+	--paper: #e9ebee;
+	--card: #ffffff;
+	--ink: #0f1317;
+	--muted: #5b6470;
+	--rule: #ccd2da;
+	--trace: #1f51ff;
+	--signal: #e8410a;
+	--bar: #10151b;
+	--bar-ink: #e7ebf0;
+	--bar-rule: #2a323c;
+	--grid: rgb(15 19 23 / 0.05);
+	color-scheme: light;
+}
+
+.dark {
+	--paper: #0b0e12;
+	--card: #12171d;
+	--ink: #e6eaef;
+	--muted: #8b95a3;
+	--rule: #232a33;
+	--trace: #8aa0ff;
+	--signal: #ff8347;
+	--bar: #070a0d;
+	--bar-ink: #e7ebf0;
+	--bar-rule: #1c232b;
+	--grid: rgb(230 234 239 / 0.05);
+	color-scheme: dark;
+}
+
+@theme inline {
+	--color-paper: var(--paper);
+	--color-card: var(--card);
+	--color-ink: var(--ink);
+	--color-muted: var(--muted);
+	--color-rule: var(--rule);
+	--color-trace: var(--trace);
+	--color-signal: var(--signal);
+	--color-bar: var(--bar);
+	--color-bar-ink: var(--bar-ink);
+	--color-bar-rule: var(--bar-rule);
+
+	--font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-body: 'Newsreader Variable', ui-serif, Georgia, serif;
+	--font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+@layer base {
+	html {
+		scroll-behavior: smooth;
+	}
+
+	body {
+		background-color: var(--paper);
+		/* Faint measurement grid, 1px lines on a 32px pitch. */
+		background-image:
+			linear-gradient(to right, var(--grid) 1px, transparent 1px),
+			linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+		background-size: 32px 32px;
+		color: var(--ink);
+		font-family: var(--font-body);
+		font-optical-sizing: auto;
+		-webkit-font-smoothing: antialiased;
+	}
+
+	::selection {
+		background-color: var(--signal);
+		color: white;
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--signal);
+		outline-offset: 3px;
+	}
+}
+
+/* Utility classes for the recurring instrument-panel idioms. */
+@utility label {
+	font-family: var(--font-mono);
+	font-size: 0.6875rem;
+	font-weight: 500;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--muted);
+}
+
+/* Display type narrows as it grows: the bigger the heading, the tighter the
+   width axis, so a hero fits its line without shrinking. */
+@utility hero {
+	font-family: var(--font-display);
+	font-weight: 800;
+	font-stretch: 79%;
+	letter-spacing: -0.02em;
+}
+
+@utility hairline {
+	border-top: 1px solid var(--rule);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
+/* Long-form post body. Measured column, serif text, panelled code blocks. */
+.prose-panel {
+	font-size: 1.125rem;
+	line-height: 1.7;
+}
+
+.prose-panel > * + * {
+	margin-top: 1.25em;
+}
+
+.prose-panel h2 {
+	font-family: var(--font-display);
+	font-size: 1.75rem;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+	margin-top: 2.5em;
+	padding-top: 0.75em;
+	border-top: 1px solid var(--rule);
+}
+
+.prose-panel h3 {
+	font-family: var(--font-display);
+	font-size: 1.25rem;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	margin-top: 2em;
+}
+
+.prose-panel a {
+	color: var(--trace);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+}
+
+.prose-panel a:hover {
+	color: var(--signal);
+}
+
+.prose-panel strong {
+	font-weight: 650;
+}
+
+.prose-panel ul,
+.prose-panel ol {
+	padding-left: 1.5rem;
+}
+
+.prose-panel ul {
+	list-style: none;
+}
+
+.prose-panel ul > li {
+	position: relative;
+}
+
+.prose-panel ul > li::before {
+	content: '';
+	position: absolute;
+	left: -1.1rem;
+	top: 0.7em;
+	width: 0.5rem;
+	height: 1px;
+	background-color: var(--signal);
+}
+
+.prose-panel ol {
+	list-style: decimal;
+}
+
+.prose-panel ol > li::marker {
+	font-family: var(--font-mono);
+	font-size: 0.8em;
+	color: var(--muted);
+}
+
+.prose-panel li + li {
+	margin-top: 0.4em;
+}
+
+.prose-panel blockquote {
+	border-left: 2px solid var(--signal);
+	padding-left: 1.25rem;
+	font-style: italic;
+	color: var(--muted);
+}
+
+.prose-panel :not(pre) > code {
+	font-family: var(--font-mono);
+	font-size: 0.84em;
+	background-color: var(--card);
+	border: 1px solid var(--rule);
+	border-radius: 3px;
+	padding: 0.1em 0.35em;
+	font-style: normal;
+}
+
+.prose-panel pre {
+	font-family: var(--font-mono);
+	font-size: 0.8125rem;
+	line-height: 1.6;
+	background-color: var(--bar) !important;
+	color: var(--bar-ink);
+	border: 1px solid var(--bar-rule);
+	padding: 1.25rem;
+	overflow-x: auto;
+	tab-size: 2;
+}
+
+.prose-panel pre code {
+	font-family: inherit;
+}
+
+.prose-panel hr {
+	border: 0;
+	border-top: 1px solid var(--rule);
+	margin: 2.5em 0;
+}
