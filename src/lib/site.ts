@@ -42,7 +42,7 @@ export const contacts: ContactLink[] = [
 	{
 		label: 'SparkFabrik',
 		handle: 'sparkfabrik.com',
-		href: 'https://www.sparkfabrik.com/',
+		href: 'https://www.sparkfabrik.com/en',
 		icon: 'spark'
 	}
 ];
