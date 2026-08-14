@@ -12,6 +12,15 @@ export const site = {
 	copyrightYear: 2026
 };
 
+/**
+ * Cloudflare Web Analytics. The beacon token is not a secret: it ships in the
+ * page for every visitor. An empty token disables the beacon, and it is never
+ * loaded outside a production build.
+ */
+export const analytics = {
+	cloudflareToken: '081ef0991e9d438ebc4325a6f44d9f9a'
+};
+
 export interface ContactLink {
 	label: string;
 	handle: string;

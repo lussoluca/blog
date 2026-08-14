@@ -53,6 +53,11 @@
 					The fastest way to reach me is GitHub or drupal.org: open an issue, or comment on one that
 					already exists. For work, talks or training, LinkedIn reaches me reliably.
 				</p>
+				<p>
+					This site counts page views with Cloudflare Web Analytics. It sets no cookies, builds no
+					profile, and follows nobody across the web. I see which posts get read, and nothing about
+					who read them.
+				</p>
 			</div>
 		</div>
 

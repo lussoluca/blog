@@ -3,9 +3,21 @@
 	import { base } from '$app/paths';
 	import Footer from '$lib/components/Footer.svelte';
 	import Header from '$lib/components/Header.svelte';
-	import { site } from '$lib/site';
+	import { analytics, site } from '$lib/site';
 
 	let { children } = $props();
+
+	// The beacon tracks History API navigations on its own, so loading it once
+	// from the root layout covers every client-side route change.
+	$effect(() => {
+		if (import.meta.env.DEV || !analytics.cloudflareToken) return;
+
+		const beacon = document.createElement('script');
+		beacon.type = 'module';
+		beacon.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+		beacon.dataset.cfBeacon = JSON.stringify({ token: analytics.cloudflareToken });
+		document.head.append(beacon);
+	});
 </script>
 
 <svelte:head>
