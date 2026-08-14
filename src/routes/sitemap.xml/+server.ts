@@ -7,7 +7,8 @@ export function GET() {
 	const urls = [
 		{ loc: `${site.url}/`, lastmod: posts[0]?.date },
 		{ loc: `${site.url}/about/` },
-		...posts.map((post) => ({ loc: `${site.url}/blog/${post.slug}/`, lastmod: post.date }))
+		{ loc: `${site.url}/articles/`, lastmod: posts[0]?.date },
+		...posts.map((post) => ({ loc: `${site.url}/articles/${post.slug}/`, lastmod: post.date }))
 	];
 
 	const body = urls

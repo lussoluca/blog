@@ -1,51 +1,69 @@
+import type { IconName } from '$lib/icons';
+
 export const site = {
 	title: 'Luca Lusso',
 	role: 'Lead developer at SparkFabrik',
-	thesis:
-		'Fifteen years inside Drupal, mostly in the parts you only see when something is slow, broken, or newly possible.',
+	headline: 'Drupal developer, module maintainer, and profiler of slow things.',
+	intro:
+		'I am Luca, a Drupal developer based in Italy and lead developer at SparkFabrik. I maintain WebProfiler and Monolog, and I spend most of my time in the layer underneath a site: the container, the event dispatcher, the cache, and the queries nobody meant to run.',
 	description:
 		'Notes on Drupal internals, PHP, profiling and AI, from the maintainer of WebProfiler and Monolog.',
 	url: 'https://lussoluca.github.io/blog',
-	locale: 'Italy'
+	copyrightYear: 2026
 };
 
 export interface ContactLink {
 	label: string;
 	handle: string;
 	href: string;
+	icon: IconName;
 }
 
 export const contacts: ContactLink[] = [
-	{ label: 'GitHub', handle: '@lussoluca', href: 'https://github.com/lussoluca' },
-	{ label: 'Drupal.org', handle: 'lussoluca', href: 'https://www.drupal.org/u/lussoluca' },
-	{ label: 'LinkedIn', handle: 'in/lussoluca', href: 'https://www.linkedin.com/in/lussoluca/' },
-	{ label: 'X', handle: '@lussoluca', href: 'https://twitter.com/lussoluca' },
-	{ label: 'Sessionize', handle: 'luca-lusso', href: 'https://sessionize.com/luca-lusso' },
-	{ label: 'SparkFabrik', handle: 'sparkfabrik.com', href: 'https://www.sparkfabrik.com/' }
+	{ label: 'GitHub', handle: '@lussoluca', href: 'https://github.com/lussoluca', icon: 'github' },
+	{
+		label: 'Drupal.org',
+		handle: 'lussoluca',
+		href: 'https://www.drupal.org/u/lussoluca',
+		icon: 'drupal'
+	},
+	{
+		label: 'LinkedIn',
+		handle: 'in/lussoluca',
+		href: 'https://www.linkedin.com/in/lussoluca/',
+		icon: 'linkedin'
+	},
+	{
+		label: 'Sessionize',
+		handle: 'luca-lusso',
+		href: 'https://sessionize.com/luca-lusso',
+		icon: 'speaking'
+	},
+	{
+		label: 'SparkFabrik',
+		handle: 'sparkfabrik.com',
+		href: 'https://www.sparkfabrik.com/',
+		icon: 'spark'
+	}
 ];
 
-export interface SpecRow {
+export interface MaintainedProject {
 	name: string;
-	value: string;
-	href?: string;
+	role: string;
+	href: string;
 }
 
-export const spec: SpecRow[] = [
-	{ name: 'Role', value: 'Lead developer' },
-	{ name: 'Company', value: 'SparkFabrik', href: 'https://www.sparkfabrik.com/' },
-	{ name: 'Based in', value: 'Italy' },
-	{ name: 'On drupal.org since', value: '2007' },
+export const projects: MaintainedProject[] = [
 	{
-		name: 'Maintains',
-		value: 'WebProfiler',
+		name: 'WebProfiler',
+		role: 'Maintainer',
 		href: 'https://www.drupal.org/project/webprofiler'
 	},
-	{ name: 'Maintains', value: 'Monolog', href: 'https://www.drupal.org/project/monolog' },
+	{ name: 'Monolog', role: 'Maintainer', href: 'https://www.drupal.org/project/monolog' },
 	{
-		name: 'Maintains',
-		value: 'Search API Typesense',
+		name: 'Search API Typesense',
+		role: 'Maintainer',
 		href: 'https://www.drupal.org/project/search_api_typesense'
 	},
-	{ name: 'Co-maintains', value: 'Devel', href: 'https://www.drupal.org/project/devel' },
-	{ name: 'Also does', value: 'Drupal training, conference talks' }
+	{ name: 'Devel', role: 'Co-maintainer', href: 'https://www.drupal.org/project/devel' }
 ];

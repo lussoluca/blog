@@ -4,16 +4,18 @@ Personal blog of Luca Lusso, built with SvelteKit and Tailwind CSS and deployed 
 
 ## Stack
 
-| Piece      | Choice                                                       |
-| ---------- | ------------------------------------------------------------ |
-| Framework  | SvelteKit 2 with Svelte 5 runes, TypeScript                  |
-| Styling    | Tailwind CSS 4 via `@tailwindcss/vite`                       |
-| Content    | Markdown routes preprocessed by mdsvex                       |
-| Output     | `@sveltejs/adapter-static`, every route prerendered          |
-| Typography | Bricolage Grotesque, Newsreader, IBM Plex Mono (self-hosted) |
-| Hosting    | GitHub Pages, deployed by `.github/workflows/deploy.yml`     |
+| Piece     | Choice                                                                          |
+| --------- | ------------------------------------------------------------------------------- |
+| Framework | SvelteKit 2 with Svelte 5 runes, TypeScript                                     |
+| Styling   | Tailwind CSS 4 via `@tailwindcss/vite`, `@tailwindcss/typography`               |
+| Design    | Spotlight, a Tailwind Plus template, ported from Next.js and React to SvelteKit |
+| Content   | Markdown routes preprocessed by mdsvex, highlighted by Prism                    |
+| Output    | `@sveltejs/adapter-static`, every route prerendered                             |
+| Hosting   | GitHub Pages, deployed by `.github/workflows/deploy.yml`                        |
 
 Configuration lives in `vite.config.ts`; this project has no `svelte.config.js`.
+
+The design, `typography.ts`, `src/prism.css`, and the components under `src/lib/components/` derive from the Spotlight template and are covered by the [Tailwind Plus license](https://tailwindcss.com/plus/license), which permits using it for a personal website whose source is public. It does not permit redistributing these files as a template or starter kit.
 
 ## Commands
 
@@ -28,24 +30,26 @@ npm run format     # prettier
 
 ## Writing a post
 
-Each post is a folder under `src/routes/blog/`, so the folder name is the URL slug and the markdown file is the route:
+Each post is a folder under `src/routes/articles/`, so the folder name is the URL slug and the markdown file is the route:
 
 ```
-src/routes/blog/my-post-slug/+page.svx
+src/routes/articles/my-post-slug/+page.svx
 ```
 
-The frontmatter is the only metadata written by hand. Word count and reading time are measured from the source at build time by `src/lib/posts.ts`, which also builds the index used by the home page, the RSS feed and the sitemap.
+The frontmatter is the only metadata written by hand. `src/lib/posts.ts` builds the index from it, and that index feeds the home page, the articles list, the RSS feed and the sitemap.
 
 ```markdown
 ---
 title: My post title
 date: '2026-08-14'
-excerpt: One or two sentences, shown in the post list and the RSS feed.
+excerpt: One or two sentences, shown in the post lists and the RSS feed.
 tags: ['drupal', 'php']
 ---
 
 Body text starts here.
 ```
+
+Backslashes inside fenced code blocks have to be doubled (`Drupal\\ai\\Event`), because mdsvex consumes single ones.
 
 Screenshots go in `static/images/posts/<slug>/` and are rendered with the `Figure` component, which frames them, adds a caption and makes them zoomable. Import it in the post before using it:
 
@@ -66,6 +70,6 @@ Screenshots go in `static/images/posts/<slug>/` and are rendered with the `Figur
 
 ## Deployment
 
-Pushing to `main` runs the Pages workflow, which builds with `BASE_PATH=/<repo>` and uploads `build/` as the Pages artifact. Enable it once in the repository settings under **Pages**, with **Source** set to **GitHub Actions**.
+Pushing to `main` runs the Pages workflow, which builds with `BASE_PATH=/<repo>` and uploads `build/` as the Pages artifact. In the repository settings under **Pages**, **Source** must be set to **GitHub Actions**.
 
 Moving to a custom domain means dropping the `BASE_PATH` environment variable from the workflow, updating `site.url` in `src/lib/site.ts`, and adding a `static/CNAME` file.

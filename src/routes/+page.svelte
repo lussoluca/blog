@@ -1,100 +1,93 @@
 <script lang="ts">
 	import { base } from '$app/paths';
-	import { posts, formatDate } from '$lib/posts';
-	import { site } from '$lib/site';
+	import ArticleCard from '$lib/components/ArticleCard.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import Container from '$lib/components/Container.svelte';
+	import SocialIcon from '$lib/components/SocialIcon.svelte';
+	import { posts } from '$lib/posts';
+	import { contacts, projects, site } from '$lib/site';
 
-	const longest = Math.max(...posts.map((post) => post.readingMinutes), 1);
+	const recent = $derived(posts.slice(0, 4));
 </script>
 
 <svelte:head>
-	<title>{site.title} · {site.description}</title>
+	<title>{site.title} - {site.headline}</title>
 	<meta name="description" content={site.description} />
 </svelte:head>
 
-<header class="mx-auto w-full max-w-5xl px-5 pt-16 pb-14 sm:pt-24">
-	<p class="label">{site.role}</p>
-
-	<h1 class="hero mt-3 text-[clamp(3.25rem,14vw,9.5rem)] leading-[0.84]">
-		Luca<br />Lusso
-	</h1>
-
-	<p class="mt-8 max-w-2xl text-xl leading-relaxed text-balance sm:text-2xl">
-		{site.thesis}
-	</p>
-</header>
-
-<section class="mx-auto w-full max-w-5xl px-5" aria-labelledby="timeline-heading">
-	<div class="hairline flex items-baseline justify-between pt-4">
-		<h2 id="timeline-heading" class="label">Posts</h2>
-		<p class="label">
-			{posts.length}
-			{posts.length === 1 ? 'span' : 'spans'} · newest first
+<Container class="mt-9">
+	<div class="max-w-2xl">
+		<h1 class="text-4xl font-bold tracking-tight text-zinc-800 sm:text-5xl dark:text-zinc-100">
+			{site.headline}
+		</h1>
+		<p class="mt-6 text-base text-zinc-600 dark:text-zinc-400">
+			{site.intro}
 		</p>
-	</div>
-
-	<ul class="mt-2">
-		{#each posts as post, index (post.slug)}
-			<li>
-				<a
-					href="{base}/blog/{post.slug}/"
-					class="group border-rule hover:bg-card grid grid-cols-1 gap-x-6 gap-y-3 border-b py-6 transition-colors sm:grid-cols-[6.5rem_1fr_9rem] sm:px-3"
-				>
-					<time
-						datetime={post.date}
-						class="text-muted font-mono text-xs tracking-wide uppercase sm:pt-2"
-					>
-						{formatDate(post.date)}
-					</time>
-
-					<div>
-						<h3
-							class="font-display group-hover:text-trace text-2xl leading-tight font-bold tracking-[-0.02em] text-balance sm:text-[1.75rem]"
-						>
-							{post.title}
-						</h3>
-						<p class="text-muted mt-2 max-w-prose text-[1.0625rem] leading-relaxed">
-							{post.excerpt}
-						</p>
-						{#if post.tags?.length}
-							<p class="text-muted mt-3 flex flex-wrap gap-x-3 font-mono text-[11px] tracking-wide">
-								{#each post.tags as tag (tag)}
-									<span>#{tag}</span>
-								{/each}
-							</p>
-						{/if}
-					</div>
-
-					<div class="sm:pt-2">
-						<div class="bg-rule/60 h-[3px] w-full">
-							<div
-								class="span bg-trace group-hover:bg-signal h-full transition-colors"
-								style:--span-width="{Math.round((post.readingMinutes / longest) * 100)}%"
-								style:--span-delay="{index * 90}ms"
-							></div>
-						</div>
-						<p class="text-muted mt-2 font-mono text-[11px]">
-							{post.readingMinutes} min read
-						</p>
-					</div>
+		<div class="mt-6 flex gap-6">
+			{#each contacts as contact (contact.href)}
+				<a href={contact.href} aria-label={contact.label} class="group -m-1 p-1">
+					<SocialIcon
+						name={contact.icon}
+						class="h-6 w-6 fill-zinc-500 transition group-hover:fill-zinc-600 dark:fill-zinc-400 dark:group-hover:fill-zinc-300"
+					/>
 				</a>
-			</li>
-		{/each}
-	</ul>
-</section>
+			{/each}
+		</div>
+	</div>
+</Container>
 
-<style>
-	/* Reading time drawn as a duration bar, the way a profiler draws a span. */
-	.span {
-		width: var(--span-width);
-		animation: span-grow 700ms cubic-bezier(0.22, 1, 0.36, 1) var(--span-delay) both;
-	}
+<Container class="mt-24 md:mt-28">
+	<div class="mx-auto grid max-w-xl grid-cols-1 gap-y-20 lg:max-w-none lg:grid-cols-2">
+		<div class="flex flex-col gap-16">
+			{#each recent as post (post.slug)}
+				<ArticleCard {post} />
+			{/each}
+		</div>
 
-	@keyframes span-grow {
-		from {
-			width: 0;
-		}
-		to {
-			width: var(--span-width);
-		}
-	}
-</style>
+		<div class="space-y-10 lg:pl-16 xl:pl-24">
+			<div class="rounded-2xl border border-zinc-100 p-6 dark:border-zinc-700/40">
+				<h2 class="flex text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+					<SocialIcon name="drupal" class="h-6 w-6 flex-none fill-zinc-400 dark:fill-zinc-500" />
+					<span class="ml-3">Maintains on drupal.org</span>
+				</h2>
+				<ol class="mt-6 space-y-4">
+					{#each projects as project (project.href)}
+						<li class="flex gap-4">
+							<div
+								class="relative mt-1 flex h-10 w-10 flex-none items-center justify-center rounded-full shadow-md ring-1 shadow-zinc-800/5 ring-zinc-900/5 dark:border dark:border-zinc-700/50 dark:bg-zinc-800 dark:ring-0"
+							>
+								<SocialIcon name="drupal" class="h-6 w-6 fill-zinc-400 dark:fill-zinc-500" />
+							</div>
+							<dl class="flex flex-auto flex-wrap gap-x-2">
+								<dt class="sr-only">Project</dt>
+								<dd class="w-full flex-none text-sm font-medium text-zinc-900 dark:text-zinc-100">
+									<a
+										href={project.href}
+										class="transition hover:text-teal-500 dark:hover:text-teal-400"
+										>{project.name}</a
+									>
+								</dd>
+								<dt class="sr-only">Role</dt>
+								<dd class="text-xs text-zinc-500 dark:text-zinc-400">{project.role}</dd>
+							</dl>
+						</li>
+					{/each}
+				</ol>
+				<Button href="https://www.drupal.org/u/lussoluca" variant="secondary" class="mt-6 w-full">
+					See all projects
+				</Button>
+			</div>
+
+			<div class="rounded-2xl border border-zinc-100 p-6 dark:border-zinc-700/40">
+				<h2 class="flex text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+					<SocialIcon name="rss" class="h-6 w-6 flex-none fill-zinc-400 dark:fill-zinc-500" />
+					<span class="ml-3">Follow the blog</span>
+				</h2>
+				<p class="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+					New posts go out through the feed. No newsletter, no tracking, no sign-up.
+				</p>
+				<Button href="{base}/rss.xml" class="mt-6 w-full">Subscribe by RSS</Button>
+			</div>
+		</div>
+	</div>
+</Container>

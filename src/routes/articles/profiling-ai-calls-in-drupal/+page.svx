@@ -47,7 +47,7 @@ Registration is guarded, but the class itself has to be loadable and compilable 
 private const EVENT_PRE_GENERATE = 'ai.pre_generate_response';
 private const EVENT_POST_GENERATE = 'ai.post_generate_response';
 private const EVENT_POST_STREAMING = 'ai.post_streaming_response';
-private const EVENT_EXCEPTION = 'Drupal\ai\Event\AiExceptionEvent';
+private const EVENT_EXCEPTION = 'Drupal\\ai\\Event\\AiExceptionEvent';
 ```
 
 Those four events are dispatched by `Drupal\ai\Plugin\ProviderProxy`, which every provider call passes through. That is the seam that makes the panel possible: one interception point, regardless of which provider plugin ends up doing the work.

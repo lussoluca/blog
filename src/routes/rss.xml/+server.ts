@@ -16,8 +16,8 @@ export function GET() {
 		.map(
 			(post) => `		<item>
 			<title>${escape(post.title)}</title>
-			<link>${site.url}/blog/${post.slug}/</link>
-			<guid isPermaLink="true">${site.url}/blog/${post.slug}/</guid>
+			<link>${site.url}/articles/${post.slug}/</link>
+			<guid isPermaLink="true">${site.url}/articles/${post.slug}/</guid>
 			<pubDate>${new Date(`${post.date}T00:00:00Z`).toUTCString()}</pubDate>
 			<description>${escape(post.excerpt)}</description>
 		</item>`

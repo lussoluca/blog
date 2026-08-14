@@ -1,14 +1,13 @@
 <script lang="ts">
 	import { base } from '$app/paths';
-	import { page } from '$app/state';
-	import { findPost, formatDate } from '$lib/posts';
+	import Container from '$lib/components/Container.svelte';
+	import { formatDate } from '$lib/posts';
 	import { site } from '$lib/site';
 
 	let {
 		title,
 		date,
 		excerpt = '',
-		tags = [] as string[],
 		children
 	}: {
 		title: string;
@@ -17,80 +16,56 @@
 		tags?: string[];
 		children: import('svelte').Snippet;
 	} = $props();
-
-	const slug = $derived(page.url.pathname.replace(/\/$/, '').split('/').at(-1) ?? '');
-	const post = $derived(findPost(slug));
-
-	let progress = $state(0);
-
-	function trackProgress() {
-		const scrollable = document.documentElement.scrollHeight - window.innerHeight;
-		progress = scrollable > 0 ? Math.min(1, window.scrollY / scrollable) : 1;
-	}
 </script>
 
 <svelte:head>
-	<title>{title} · {site.title}</title>
+	<title>{title} - {site.title}</title>
 	<meta name="description" content={excerpt || site.description} />
 </svelte:head>
 
-<svelte:window onscroll={trackProgress} onresize={trackProgress} />
-
-<div
-	class="bg-signal fixed inset-x-0 top-0 z-40 h-[3px] origin-left"
-	style:transform="scaleX({progress})"
-	role="presentation"
-></div>
-
-<article class="mx-auto w-full max-w-3xl px-5 pt-14 sm:pt-20">
-	<a href="{base}/" class="label hover:text-signal">← All posts</a>
-
-	<h1 class="hero mt-6 text-[clamp(2.375rem,7.5vw,4.5rem)] leading-[0.94] text-balance">
-		{title}
-	</h1>
-
-	{#if excerpt}
-		<p class="text-muted mt-6 text-xl leading-relaxed text-balance">{excerpt}</p>
-	{/if}
-
-	<dl
-		class="border-rule mt-8 grid grid-cols-2 gap-y-3 border-y py-3 font-mono text-[11px] sm:grid-cols-4"
-	>
-		<div>
-			<dt class="text-muted uppercase">Published</dt>
-			<dd class="mt-1">{formatDate(date)}</dd>
-		</div>
-		<div>
-			<dt class="text-muted uppercase">Reading</dt>
-			<dd class="mt-1">{post?.readingMinutes ?? '--'} min</dd>
-		</div>
-		<div>
-			<dt class="text-muted uppercase">Words</dt>
-			<dd class="mt-1">{post?.words.toLocaleString('en-GB') ?? '--'}</dd>
-		</div>
-		<div>
-			<dt class="text-muted uppercase">Tags</dt>
-			<dd class="mt-1">{tags.join(', ') || '--'}</dd>
-		</div>
-	</dl>
-
-	<div class="prose-panel mt-12">
-		{@render children()}
-	</div>
-
-	<footer class="border-rule mt-20 border-t pt-6">
-		<p class="text-lg">
-			Questions, corrections, or a better way to do this? Find me on
+<Container class="mt-16 lg:mt-32">
+	<div class="xl:relative">
+		<div class="mx-auto max-w-2xl">
 			<a
-				href="https://github.com/lussoluca"
-				class="text-trace hover:text-signal underline decoration-1 underline-offset-3">GitHub</a
+				href="{base}/articles/"
+				aria-label="Go back to articles"
+				class="group mb-8 flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-md ring-1 shadow-zinc-800/5 ring-zinc-900/5 transition lg:absolute lg:-left-5 lg:-mt-2 lg:mb-0 xl:-top-1.5 xl:left-0 xl:mt-0 dark:border dark:border-zinc-700/50 dark:bg-zinc-800 dark:ring-0 dark:ring-white/10 dark:hover:border-zinc-700 dark:hover:ring-white/20"
 			>
-			or read
-			<a
-				href="{base}/about/"
-				class="text-trace hover:text-signal underline decoration-1 underline-offset-3"
-				>the rest of my contacts</a
-			>.
-		</p>
-	</footer>
-</article>
+				<svg
+					viewBox="0 0 16 16"
+					fill="none"
+					aria-hidden="true"
+					class="h-4 w-4 stroke-zinc-500 transition group-hover:stroke-zinc-700 dark:stroke-zinc-500 dark:group-hover:stroke-zinc-400"
+				>
+					<path
+						d="M7.25 11.25 3.75 8m0 0 3.5-3.25M3.75 8h8.5"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+				</svg>
+			</a>
+
+			<article>
+				<header class="flex flex-col">
+					<h1
+						class="mt-6 text-4xl font-bold tracking-tight text-zinc-800 sm:text-5xl dark:text-zinc-100"
+					>
+						{title}
+					</h1>
+					<time
+						datetime={date}
+						class="order-first flex items-center text-base text-zinc-400 dark:text-zinc-500"
+					>
+						<span class="h-4 w-0.5 rounded-full bg-zinc-200 dark:bg-zinc-500"></span>
+						<span class="ml-3">{formatDate(date)}</span>
+					</time>
+				</header>
+
+				<div class="prose dark:prose-invert mt-8">
+					{@render children()}
+				</div>
+			</article>
+		</div>
+	</div>
+</Container>
