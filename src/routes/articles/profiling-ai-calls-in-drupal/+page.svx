@@ -7,6 +7,7 @@ tags: ['drupal', 'webprofiler', 'ai', 'observability']
 
 <script>
 	import Figure from '$lib/components/Figure.svelte';
+	import Video from '$lib/components/Video.svelte';
 </script>
 
 Add a chatbot to a Drupal site and something uncomfortable happens: the slowest, most expensive part of the request becomes the part you know the least about. The page took six seconds. Which of those seconds belonged to a provider? How many calls were there, really? Which model answered? How many tokens did you pay for, and how many of them were a guardrail checking the question before anyone answered it?
@@ -146,19 +147,21 @@ None of that is a performance fix on its own. It is the thing you need before a 
 
 ## Trying it
 
-The collector shipped in [WebProfiler 11.2.2](https://www.drupal.org/project/webprofiler/releases/11.2.2), released today for Drupal 11:
+The collector shipped in [WebProfiler 11.2.2](https://www.drupal.org/project/webprofiler/releases/11.2.2):
 
 ```bash
 composer require 'drupal/webprofiler:^11.2'
 ```
 
-Enable the module, make sure the AI panel is active in the toolbar (it is on by default in `webprofiler.settings`), and load a page that talks to a provider:
+Enable the module, make sure the AI panel is active in the toolbar (it is on by default in `webprofiler.settings`), and load a page that talks to a provider. Then read the toolbar. If the number of calls surprises you, that is the panel doing its job.
 
-```yaml
-active_toolbar_items:
-  ai: ai
-  ajax: ajax
-  blocks: blocks
-```
+## Ajax requests
 
-Then read the toolbar. If the number of calls surprises you, that is the panel doing its job.
+The collector works in Ajax requests too. The toolbar AJAX collector is updated every time a request starts, so you can use it to monitor an AI call. A click on the collected profile opens the panel for that request, and the Metrics tab shows the total time and tokens for all calls in that request. The Calls tab shows each call, and the Guardrails and Tools tabs show their respective evaluations and invocations.
+
+<Video
+	src="/videos/posts/webprofiler-ai/ajax-ai-collector.mp4"
+	poster="/videos/posts/webprofiler-ai/ajax-ai-collector.jpg"
+	caption="Asking the chatbot a question, then following the Ajax POST into the profiler: the AJAX collector picks up the request, and the AI panel reports one call, 6522.16 ms and 368 tokens."
+	wide
+/>
