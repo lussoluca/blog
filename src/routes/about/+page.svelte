@@ -19,7 +19,7 @@
 		<div class="lg:pl-20">
 			<div class="max-w-xs px-2.5 lg:max-w-none">
 				<img
-					src="{base}/images/avatar.jpg"
+					src="{base}/images/avatar.png"
 					alt="Luca Lusso"
 					class="aspect-square rotate-3 rounded-2xl bg-zinc-100 object-cover dark:bg-zinc-800"
 				/>

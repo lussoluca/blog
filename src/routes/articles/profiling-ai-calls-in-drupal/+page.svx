@@ -11,7 +11,7 @@ tags: ['drupal', 'webprofiler', 'ai', 'observability']
 
 Add a chatbot to a Drupal site and something uncomfortable happens: the slowest, most expensive part of the request becomes the part you know the least about. The page took six seconds. Which of those seconds belonged to a provider? How many calls were there, really? Which model answered? How many tokens did you pay for, and how many of them were a guardrail checking the question before anyone answered it?
 
-Until now the honest answer in Drupal was to add logging and guess. [WebProfiler](https://www.drupal.org/project/webprofiler) has had a panel per subsystem for years (database, cache, events, Views) and AI was the obvious hole. [Merge request !45](https://git.drupalcode.org/project/webprofiler/-/merge_requests/45) closes it with a new `AiDataCollector` and an AI panel.
+Until now the honest answer in Drupal was to add logging and guess. [WebProfiler](https://www.drupal.org/project/webprofiler) has had a panel per subsystem for years (database, cache, events, Views) and AI was the obvious hole. [Merge request !45](https://git.drupalcode.org/project/webprofiler/-/merge_requests/45) closed it with a new `AiDataCollector` and an AI panel, released in WebProfiler 11.2.2.
 
 <Figure
 	src="/images/posts/webprofiler-ai/toolbar-summary.png"
@@ -146,7 +146,13 @@ None of that is a performance fix on its own. It is the thing you need before a 
 
 ## Trying it
 
-The collector is on the `11.0.x` branch of WebProfiler. Enable the module, make sure the AI panel is active in the toolbar (it is on by default in `webprofiler.settings`), and load a page that talks to a provider:
+The collector shipped in [WebProfiler 11.2.2](https://www.drupal.org/project/webprofiler/releases/11.2.2), released today for Drupal 11:
+
+```bash
+composer require 'drupal/webprofiler:^11.2'
+```
+
+Enable the module, make sure the AI panel is active in the toolbar (it is on by default in `webprofiler.settings`), and load a page that talks to a provider:
 
 ```yaml
 active_toolbar_items:

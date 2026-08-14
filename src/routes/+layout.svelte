@@ -9,7 +9,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href="{base}/images/avatar.jpg" />
+	<link rel="icon" href="{base}/images/avatar.png" />
 	<link rel="alternate" type="application/rss+xml" title={site.title} href="{base}/rss.xml" />
 </svelte:head>
 

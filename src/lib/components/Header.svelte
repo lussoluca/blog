@@ -142,7 +142,7 @@
 					style="transform: var(--avatar-image-transform)"
 				>
 					<img
-						src="{base}/images/avatar.jpg"
+						src="{base}/images/avatar.png"
 						alt=""
 						class="h-16 w-16 rounded-full bg-zinc-100 object-cover dark:bg-zinc-800"
 					/>
@@ -164,7 +164,7 @@
 						>
 							<a href="{base}/" aria-label="Home" class="pointer-events-auto">
 								<img
-									src="{base}/images/avatar.jpg"
+									src="{base}/images/avatar.png"
 									alt=""
 									class="h-9 w-9 rounded-full bg-zinc-100 object-cover dark:bg-zinc-800"
 								/>
