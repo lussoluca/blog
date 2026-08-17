@@ -1,0 +1,239 @@
+---
+title: Drupal in a long-running process
+date: '2026-08-17'
+excerpt: Drupal spends a request filling static caches and then throws the whole process away. Keep the process alive, in a Symfony Messenger worker or a FrankenPHP worker, and every one of those caches becomes a lie that outlives the work it was computed for.
+tags: ['drupal', 'symfony', 'messenger', 'performance']
+---
+
+Drupal is very good at forgetting. A request boots the container, warms a few dozen static caches, answers, and then the whole process is destroyed. Nothing has to be invalidated because nothing survives. That amnesia is load-bearing: a static property that caches an access check, an entity, a set of plugin definitions or a "have I already invalidated this tag" flag is correct precisely because it lives for a few hundred milliseconds and dies with the request.
+
+Then you put Drupal in a process that does not die. A Symfony Messenger worker, FrankenPHP in worker mode, Swoole, RoadRunner, ReactPHP. Suddenly those caches have a lifetime measured in hours and hundreds of units of work, and every assumption they encode is wrong.
+
+The interesting part is that nothing crashes. No exception, no warning, no entry in the log. The code keeps running and quietly produces wrong output, because "request-scoped" was never enforced by anything, it was a convention held up by the process exiting.
+
+What follows is the shape of that problem: four ways request-scoped state breaks when the process outlives the request, why each one is invisible, and the single hook that fixes all of them.
+
+## The pattern to keep in mind
+
+Almost every long-running Drupal handler looks like this: it receives a unit of work, reads some entities, writes something derived, and invalidates a cache tag so the frontend picks the change up. A search indexer, a translation job, a content import, a derived-table rebuild, a webhook consumer. The mechanics below apply to all of them.
+
+I hit them through a materialized menu access table, rebuilt from a Messenger message per menu change, but nothing about the failures is menu-shaped. Every one of them is a property of the runtime.
+
+One thing worth getting right before any of it: if the message is dispatched from inside a database transaction, stamp it so it is only queued once that transaction commits.
+
+```php
+$this->messageBus->dispatch(
+  new MyThingChangedMessage($id),
+  [new DispatchAfterCurrentBusStamp()],
+);
+```
+
+Without the stamp a fast worker can consume the message before the transaction commits, and the handler reads a state that does not exist yet. This one is not about long-running processes at all, it is about asynchrony, but it produces the same "sometimes wrong, never explained" texture as everything else here, so it is worth eliminating first.
+
+## Failure one: an invalidation that only ever happens once
+
+The best symptom in this whole class of bugs, because it is so specific: **it works once per worker restart.**
+
+Restart the worker, trigger a change, the handler runs, the frontend updates. Trigger a second change, the handler runs, writes exactly the right data, reports success, and the frontend never updates again. Restart the worker and the next one propagates.
+
+The cause is `CacheTagsChecksum`, doing exactly what it was written to do:
+
+```php
+// Drupal\Core\Cache\CacheTagsChecksumTrait
+public function invalidateTags(array $tags) {
+  foreach ($tags as $key => $tag) {
+    if (isset($this->invalidatedTags[$tag])) {
+      unset($tags[$key]);
+    }
+    else {
+      $this->invalidatedTags[$tag] = TRUE;
+      unset($this->tagCache[$tag]);
+    }
+  }
+  if (!$tags) {
+    return;
+  }
+  // ... only past this point does anything reach the shared checksum.
+}
+```
+
+`$invalidatedTags` guards against invalidating the same tag repeatedly inside one request. In a request that is free: the tag has already been bumped in the shared checksum, everything downstream is already invalid, and a second call would be pure overhead.
+
+In a worker there is no "one request". The property is per *process*. The first message invalidates `node_list` and the checksum in Redis moves. In every later message of that worker the tag is filtered out of `$tags`, the array comes out empty, and the method returns before touching the shared backend. Nothing tagged with it is ever busted again until the worker restarts.
+
+Note what this bug is not. It is not a failed write. The data is correct, the handler succeeded, the code you would go and read is fine. The skipped step is several layers below anything you changed. And every handler that saves entities re-invalidates list tags, so an importer, an indexer and a derived-table rebuild all hit it identically.
+
+## Failure two: reads from the past
+
+The same "per process, not per request" shift makes reads lie, in more places.
+
+`EntityStorageBase` keeps loaded entities in a static cache behind `entity.memory_cache`. Plugin managers cache their discovered definitions. `drupal_static()` holds whatever procedural code decided to memoize. In a request all of them are snapshots of a state the request itself is the only writer of, which is what makes them safe.
+
+In a worker they are snapshots taken at boot, or during message #1, while the actual writer is a web request in a different process that committed something ten seconds ago. A handler that walks a hierarchy, resolves a parent chain, or compares a loaded entity against what it expects, computes against data that has been superseded and writes a result that was wrong before it was saved.
+
+There is no error here either. Correct-looking code, plausible-looking output, no way to tell from the handler that its inputs were stale.
+
+## Failure three: access results that never change
+
+This one takes the longest to find, because it hides behind a bug that looks already fixed.
+
+Any handler that derives something from entity access is exposed: precomputed visibility, a filtered index, a permissions-aware export. Publish a node, the handler runs, it writes its derived data, the tag is invalidated, the cache is genuinely cleared, and the node is still missing from the output.
+
+`EntityAccessControlHandler` caches access results in an instance property, and `EntityTypeManager` keeps that handler instance for the lifetime of the process:
+
+```php
+// Drupal\Core\Entity\EntityAccessControlHandler
+protected function setCache($access, $cid, $operation, $langcode, AccountInterface $account) {
+  // Save the given value in the static cache and directly return it.
+  return $this->accessCache[$account->id()][$cid][$langcode][$operation] = $access;
+}
+```
+
+Once message #1 has computed "anonymous cannot view node 42", every later message gets that answer back from memory, no matter what happened to node 42 in the database since. Everything downstream of the bug works perfectly, which is precisely why it is invisible: the invalidation lands, the cache is cleared, the page is rebuilt, and it is rebuilt from a decision made an hour ago.
+
+## Failure four: State, and the flag nobody can read
+
+State looks like the obvious place to keep a small piece of cross-process bookkeeping: a dirty flag, a last-run timestamp, a cursor. It is backed by the key-value store, so it is shared between processes, so a read should always see what another process just wrote.
+
+It is shared, but the read does not reach it. State wraps that key-value store in an **in-memory cache**, and in a long-running process that cache is the snapshot taken the first time each key was read, which for a worker means at boot.
+
+This kills the standard coalescing pattern. A single user action is rarely a single entity save: reordering items in an admin UI, a bulk operation, or a content change touching several related entities persists many entities in one request, so one action queues many messages naming the same target. The usual fix is a dirty flag, set at dispatch and cleared when the work completes, so the first message does the work and the rest return early:
+
+```php
+public function __invoke(MyThingChangedMessage $message): void {
+  // A burst of edits queues N messages for the same target. The first one
+  // does the work and clears the flag; the rest have nothing left to do.
+  if (!$this->state->get('my_thing.dirty.' . $message->id, FALSE)) {
+    return;
+  }
+
+  $this->rebuild($message->id);
+  $this->state->set('my_thing.dirty.' . $message->id, FALSE);
+}
+```
+
+In a worker that guard does nothing useful. A flag cleared in message #1, or set by a web request, is invisible to message #2, which keeps reading the boot-time value. Depending on which value it froze, the worker either does the full work every single time (no coalescing at all) or skips a target that is genuinely dirty, which is strictly worse than the problem being solved.
+
+## The fix is one hook and a list
+
+None of these four are bugs in Drupal, and none are bugs in Symfony Messenger. They are all one bug: request-scoped state living in a process that outlives the request. So the fix is to give every unit of work the one thing a long-running process took away, a teardown.
+
+Symfony Messenger dispatches `WorkerMessageReceivedEvent` before each message is handled, which is the seam:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\my_base\EventSubscriber;
+
+use Drupal\Core\Cache\CacheTagsChecksumInterface;
+use Drupal\Core\Cache\MemoryCache\MemoryCacheInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Menu\MenuLinkManagerInterface;
+use Drupal\Core\State\StateInterface;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Symfony\Component\Messenger\Event\WorkerMessageReceivedEvent;
+
+final readonly class WorkerMessageResetSubscriber implements EventSubscriberInterface {
+
+  public function __construct(
+    private CacheTagsChecksumInterface $cacheTagsChecksum,
+    private MenuLinkManagerInterface $menuLinkManager,
+    #[Autowire(service: 'entity.memory_cache')]
+    private MemoryCacheInterface $entityMemoryCache,
+    private StateInterface $state,
+    private EntityTypeManagerInterface $entityTypeManager,
+  ) {}
+
+  public static function getSubscribedEvents(): array {
+    return [WorkerMessageReceivedEvent::class => 'onMessageReceived'];
+  }
+
+  public function onMessageReceived(WorkerMessageReceivedEvent $event): void {
+    // Clears the per-process $invalidatedTags guard so deferred tag
+    // invalidation is not suppressed after the first message.
+    $this->cacheTagsChecksum->reset();
+    // Fresh reads for handlers that load entities or walk a plugin tree.
+    $this->entityMemoryCache->deleteAll();
+    $this->menuLinkManager->resetDefinitions();
+    // Fresh State, so cross-process flags and cursors are actually read.
+    $this->state->resetCache();
+    // Fresh access results, so a publish/unpublish since the last message is
+    // seen instead of the value cached under the first one.
+    foreach ($this->entityTypeManager->getDefinitions() as $entity_type_id => $entity_type) {
+      if ($entity_type->hasHandlerClass('access')) {
+        $this->entityTypeManager->getAccessControlHandler($entity_type_id)->resetCache();
+      }
+    }
+    \drupal_static_reset();
+  }
+
+}
+```
+
+Registered like any other subscriber:
+
+```yaml
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  Drupal\my_base\EventSubscriber\WorkerMessageResetSubscriber: ~
+```
+
+If you run Messenger inside Drupal through the [`sm`](https://www.drupal.org/project/sm) module, check one thing before trusting any of this: the consume command has to be wired with Drupal's `event_dispatcher` for the Symfony worker's events to reach Drupal subscribers at all. If it is not, the subscriber is simply never called, and every symptom above stays exactly as it was while the fix sits in the repository looking correct.
+
+The same list is what other runtimes need, at their own boundary. FrankenPHP worker mode, RoadRunner and Swoole each have a per-request hook or a kernel reboot strategy; what goes in it is this, plus whatever the HTTP path touches that a worker does not.
+
+## Why this costs nothing
+
+The obvious objection is that caches exist for a reason and clearing them hundreds of times an hour sounds expensive.
+
+It is not, because of what these particular resets are. Every call clears one in-memory array. None writes to the database. None touches a shared cache backend, so nothing in Redis is invalidated and no concurrent web request is affected or slowed. Building an access control handler is an in-memory operation and the entity type manager caches the instance, so the loop resets the same handlers a later message reuses rather than constructing new ones.
+
+What you pay is that the next unit of work re-reads from the shared backends instead of its warm in-process copy: a State read, some plugin definitions, the entities the handler actually loads. That is the cost of a cold request, once per message, for handlers that are already doing database writes. For anything short of a very high-frequency queue it does not register.
+
+Correctness first, and here correctness happens to be nearly free.
+
+## Where the reset belongs
+
+Not in the module that discovered it.
+
+I found all four failures through one feature, but not one of them is about that feature. A suppressed tag invalidation is a property of the worker, and the next handler to hit it will be a search indexer, a translation job, or an importer. Putting the subscriber in the feature module means the fix arrives only for sites that enable that feature, and then arrives a second time, differently, in the next module that trips over it.
+
+So the reset lives one layer down, in the site's base or platform module, and applies to every message the worker consumes. Feature modules ship no subscriber.
+
+What a distributable module can do instead is state the requirement. If your module's correctness depends on a worker that resets request-scoped state, say so in the README: the minimum list of resets, why each one is there, and a reference implementation to copy. A generic module cannot install platform hygiene, but it can refuse to pretend it does not need it, and it can save the next person the week of debugging.
+
+## What fresh state unlocks
+
+Once every message starts from clean state, the coalescing guard from failure four starts working, and it is a real win. A bulk edit does the derived work once regardless of how many entity saves it triggered. Cost becomes a function of distinct changed targets per worker drain, not of queued message count.
+
+Note the direction of the dependency. The guard is correct *only* because the State reset runs before every message. Without the reset it does not degrade gracefully: it reads a boot-time flag and can skip work that is genuinely pending. The reset and the guard are a pair, and neither is safe to remove alone. Write that down somewhere the next person will look, because the guard reads like a self-contained three-line optimization and it very much is not.
+
+Keying the early return on the same State the work writes also makes the handler idempotent for free. A message arriving after the same work was done by something else finds nothing to do and drains cheaply, which is what you want from a queue that can redeliver.
+
+## Pinning it with tests
+
+The failure mode of this entire area is silence, which makes it a bad thing to leave to code review. The invariants are testable, so test them:
+
+- the reset performs no cache tag invalidation of its own,
+- it mutates no persisted data,
+- it leaves State and warm plugin definitions on disk intact,
+- and a burst of N messages for one target collapses to exactly one unit of work.
+
+The last one matters most, because it fails in both directions. Break the reset and the count goes up to N. Break the flag handling and it goes to zero, which is failure three wearing a different hat.
+
+## The general shape
+
+Symfony Messenger is where most Drupal sites meet this first, but none of it is about Messenger. This class of problem is what makes FrankenPHP worker mode, Swoole and RoadRunner harder to adopt than a benchmark suggests. Those runtimes are not slow at booting Drupal, they are fast at *not* booting it, and everything Drupal caches on the assumption of imminent death becomes state you now own.
+
+Two things worth carrying to the next one.
+
+First, the fingerprint. If something works on the first unit of work and stops working on every subsequent one until the process restarts, stop debugging your handler. You are looking at a static, and the code that fails is usually several layers below the code you changed. "Works once per restart" is diagnostic on its own.
+
+Second, there is no complete list. Cache tags checksum, entity memory cache, plugin definitions, State, access handlers, `drupal_static_reset()` is what one site's handlers turned out to touch, discovered one production symptom at a time. Add a handler that leans on a different subsystem, config overrides, the language negotiator, the current user, a renderer's context stack, and the list grows. Drupal has no inventory of its own request-scoped state, so you cannot enumerate it up front.
+
+What you can do is put the reset in one place, treat it as a list that is expected to grow, and treat every "works once per restart" report as a new entry rather than a new bug.
