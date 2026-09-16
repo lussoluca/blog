@@ -220,4 +220,4 @@ drush en entity_adapter
 
 Then write an interface, drop a class in `src/Entity/Adapter/`, rebuild the cache and inject `AdapterManager`.
 
-The [issue queue](https://www.drupal.org/project/issues/entity_adapter) is open, and the part I would most like feedback on is the discovery convention. Requiring adapters to live in `src/Entity/Adapter/` keeps the compile-time scan cheap and predictable, but it is a convention the module imposes rather than one Drupal already has.
+The [issue queue](https://www.drupal.org/project/issues/entity_adapter) is open for bugs and improvements, and feedback is very welcome.
