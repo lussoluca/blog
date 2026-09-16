@@ -1,0 +1,223 @@
+---
+title: Domain logic on entities, without touching the entity
+date: '2026-09-16'
+excerpt: Entity Adapter attaches domain-specific behaviour to entities, and to any other object, with a PHP attribute and an interface of your own. No bundle class, no entity class override, no helper functions in a .module file.
+tags: ['drupal', 'php', 'architecture', 'dependency-injection']
+---
+
+Every Drupal project of a certain size ends up with the same question: where does the code that knows what a node _means_ actually live?
+
+The question sounds abstract until you look at what a real site does with a node. A user has a `field_groups` list, and half a dozen places need the set of group identifiers, plus a stable hash of them for a cache context. A publication node has an author reference, a year and a venue, and the citation string built from them shows up in a Twig template, in a search index, in an export and in a mail. A course node has a parent programme two levels up a taxonomy, and everything from breadcrumbs to access checks needs it.
+
+None of that is field storage. It is domain logic, and it has to live somewhere.
+
+## The places it usually ends up
+
+**In the calling code.** `$node->get('field_groups')->getValue()` appears in a controller, then in a Twig preprocess, then in an event subscriber. It works, it is fast to write, and the day the field is renamed you find out how many places knew about it. The field machine name has quietly become a public API with no declaration and no way to grep for its meaning, only for its name.
+
+**In a `.module` file.** A `mymodule_get_user_groups(UserInterface $user)` function, then a second one that formats them, then a third that caches the first. They cannot be injected, cannot be mocked, and cannot be type-hinted against, so the calling code depends on a global function and nothing describes the contract.
+
+**In a bundle class.** Drupal lets you swap the class for a single bundle through `hook_entity_bundle_info_alter()`, which is a real improvement: the logic lives on the object and the IDE follows it. The cost is that you get exactly one class per bundle, that it extends `Node` and therefore inherits the entire entity API surface, and that it is instantiated by the storage handler rather than by the container. No constructor injection, so any service it needs comes from `\Drupal::service()`. And the class grows, because every concern touching that bundle has only one place to go.
+
+**In a service.** Inject a `PublicationCitationBuilder` and pass it the node. This one is architecturally clean and it is the right answer more often than people admit. What it does not give you is the thing that makes bundle classes attractive in the first place: calling code that reads as though the behaviour belongs to the object it is talking about.
+
+[Entity Adapter](https://www.drupal.org/project/entity_adapter) is an attempt to get both. You declare an interface, write a small class that implements it for a given entity class, and the container does the wiring.
+
+## The interface is the point
+
+The adapter is an implementation detail. The interface is what the rest of the codebase depends on, so it is written first and it is written in the language of the domain, not of the storage:
+
+```php
+<?php
+
+namespace Drupal\mymodule\Entity\Adapter;
+
+interface UserWithGroupsInterface {
+
+  /**
+   * @return string[]
+   */
+  public function getGroups(): array;
+
+  public function getGroupHash(): string;
+
+}
+```
+
+Nothing in that file mentions `field_groups`, a bundle, or even Drupal. That is the whole bet: callers depend on `getGroups()`, and the fact that it comes from a field today, from a remote service tomorrow, or from a computed property the day after is not their problem.
+
+## The adapter
+
+The implementation is a plain class. A PHP attribute says which class it adapts and which interface it exposes:
+
+```php
+<?php
+
+namespace Drupal\mymodule\Entity\Adapter;
+
+use Drupal\entity_adapter\Attribute\AsEntityAdapter;
+use Drupal\entity_adapter\ObjectAdapterInterface;
+use Drupal\user\UserInterface;
+
+#[AsEntityAdapter(entity: UserInterface::class, interface: UserWithGroupsInterface::class)]
+class UserWithGroups implements UserWithGroupsInterface, ObjectAdapterInterface {
+
+  private UserInterface $user;
+
+  public function setAdaptedEntity(object $object): self {
+    \assert($object instanceof UserInterface);
+    $this->user = $object;
+
+    return $this;
+  }
+
+  public function getGroups(): array {
+    return \array_column($this->user->get('field_groups')->getValue(), 'value');
+  }
+
+  public function getGroupHash(): string {
+    return \md5(\implode(',', $this->getGroups()));
+  }
+
+}
+```
+
+Two conventions carry the discovery: the class lives under `src/Entity/Adapter/` in a module (any depth below that is fine), and it carries `#[AsEntityAdapter]`. `ObjectAdapterInterface` is what asks for the adapted object to be injected; an adapter that does not need one simply leaves it out.
+
+Because adapters are registered as ordinary autowired services, they get constructor injection like anything else:
+
+```php
+#[AsEntityAdapter(entity: NodeInterface::class, interface: NodeWithBreadcrumbInterface::class)]
+class NodeWithBreadcrumb implements NodeWithBreadcrumbInterface, ObjectAdapterInterface {
+
+  public function __construct(
+    private readonly EntityTypeManagerInterface $entityTypeManager,
+  ) {}
+
+  // ...
+}
+```
+
+That is the line a bundle class cannot cross. The storage handler builds bundle classes, so their dependencies arrive through the service locator; adapters are built by the container, so they arrive through the constructor.
+
+## Asking for an interface
+
+Calling code injects one service and names the interface it wants:
+
+```php
+use Drupal\entity_adapter\AdapterManager;
+use Drupal\mymodule\Entity\Adapter\UserWithGroupsInterface;
+use Drupal\user\UserInterface;
+
+class MyService {
+
+  public function __construct(
+    private readonly AdapterManager $adapterManager,
+  ) {}
+
+  public function processUser(UserInterface $user): void {
+    $groups = $this->adapterManager
+      ->adapt($user, UserWithGroupsInterface::class)
+      ->getGroups();
+  }
+
+}
+```
+
+`adapt()` is annotated with a template, so static analysis and the IDE both know that what comes back is a `UserWithGroupsInterface`. There is no string key to get wrong and no array of definitions to consult: the interface is the lookup key, and it is a class constant.
+
+## What happens at compile time
+
+There is no runtime scanning and no plugin cache to worry about. The module registers two compiler passes through a service provider, and the registry exists before the first request that uses it.
+
+`AttributeDiscoveryCompilerPass` walks the `src/Entity/Adapter/` directory of every registered namespace and defines a service for each class carrying the attribute. The definitions it creates are autowired and, deliberately, **not shared**:
+
+```php
+$definition
+  ->setAutoconfigured(TRUE)
+  ->setAutowired(TRUE)
+  ->setShared(FALSE)
+  ->setPublic(TRUE);
+```
+
+That step exists because Symfony's `registerAttributeForAutoconfiguration()` only decorates definitions that already exist, and Drupal does not register everything under `src/` as a service the way a standard Symfony application does. So the pass creates the definitions first, then registers the attribute for autoconfiguration, which tags each adapter with its adapted class, its exposed interface and its own class name.
+
+`DefinitionTaggerCompilerPass` then collects those tags into a two-level map, adapted class to interface to service id, and passes it as the first constructor argument of `AdapterManager`. At runtime `adapt()` is a loop over that map with an `instanceof` check:
+
+```php
+foreach ($this->adapters as $class => $interfaces) {
+  if ($object instanceof $class && isset($interfaces[$interface])) {
+    $adapter_service_id = $interfaces[$interface];
+    break;
+  }
+}
+```
+
+The `instanceof` is worth pausing on. The attribute's `entity` argument takes a class _or an interface_, so registering an adapter against `NodeInterface` covers every node class, including bundle classes, and registering against a specific bundle class covers only that one. The two styles coexist: a general adapter for all nodes, a specialised one for the bundle that needs different behaviour behind the same interface.
+
+Being registered at container compile time also sets the one operational rule: a new adapter appears after a cache rebuild, exactly like a new service.
+
+## The variations that come up
+
+**An adapter that does not need the object.** Skip `ObjectAdapterInterface` and nothing is injected. Useful for behaviour that belongs to a type rather than to an instance, such as formatting or defaults:
+
+```php
+#[AsEntityAdapter(entity: NodeInterface::class, interface: NodeHelperInterface::class)]
+class NodeHelper implements NodeHelperInterface {
+
+  public function formatTitle(string $title): string {
+    return \mb_strtoupper($title);
+  }
+
+}
+```
+
+**Several interfaces for one class.** This is the reason the module exists rather than the one-class-per-bundle alternative. A user can be adapted to `UserWithGroupsInterface` by one module and to `UserWithRolesInterface` by another, each shipping its own small class, neither knowing about the other, and neither growing a god object:
+
+```php
+#[AsEntityAdapter(entity: UserInterface::class, interface: UserWithRolesInterface::class)]
+class UserWithRoles implements UserWithRolesInterface, ObjectAdapterInterface {}
+
+#[AsEntityAdapter(entity: UserInterface::class, interface: UserWithGroupsInterface::class)]
+class UserWithGroups implements UserWithGroupsInterface, ObjectAdapterInterface {}
+```
+
+**Objects that are not entities.** The attribute is named for the common case, but nothing in `AdapterManager::adapt()` requires an entity. Any object works: a value object, a DTO from an API client, a Symfony request. The signature is `adapt(object $object, string $interface)`.
+
+## The state question
+
+Adapter services are not shared, so every `adapt()` call returns a fresh instance. That is a deliberate trade.
+
+It has to be that way, because a shared adapter holding an injected entity would hand the next caller the previous caller's object, and that bug is the kind that only appears under load. Non-shared means an adapter can safely keep per-instance state, memoize a derived value, or build up something expensive and hand it back.
+
+What it also means is that memoization inside an adapter lives exactly as long as the adapter does, which is one call chain. If a value is expensive and needed across a request, cache it where caches belong, not in the adapter and not by making the adapter shared.
+
+## When it goes wrong
+
+Two exceptions, and they mean different things:
+
+- `\InvalidArgumentException` says no adapter maps this object's class to that interface. Usually a missing cache rebuild, a class outside `src/Entity/Adapter/`, or an adapter registered against a narrower class than the object you are passing.
+- `\LogicException` says an adapter was found but does not implement the interface it was registered for. The attribute and the `implements` clause disagree, which is a real bug in the adapter, caught with a useful message rather than a fatal type error somewhere downstream.
+
+Neither is a silent failure, which was a design goal. The whole point of depending on an interface is to fail at the boundary, loudly, instead of returning null and letting it travel.
+
+## What this is really for
+
+Adapters do not make anything possible that a well-named service could not do. What they change is where the seams are.
+
+The field name lives in one file. The interface is the only thing the rest of the codebase compiles against, so renaming a field, moving a value to a computed property, or replacing storage with a remote call is a change to one class and no callers. The behaviour is a class with a constructor, so it is testable without a bundle class, without entity mocking beyond the field it reads, and with its dependencies passed in. Two teams can attach behaviour to the same entity type without editing the same file. And the calling code reads as intention: `adapt($user, UserWithGroupsInterface::class)->getGroups()` says what it wants, not where it is stored.
+
+The module deliberately does very little: an attribute, two compiler passes, one manager with a single public method, and no configuration. That is the entire surface.
+
+## Trying it
+
+Entity Adapter requires Drupal 11 and PHP 8.3:
+
+```bash
+composer require drupal/entity_adapter
+drush en entity_adapter
+```
+
+Then write an interface, drop a class in `src/Entity/Adapter/`, rebuild the cache and inject `AdapterManager`.
+
+The [issue queue](https://www.drupal.org/project/issues/entity_adapter) is open for bugs and improvements, and feedback is very welcome.
