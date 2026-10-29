@@ -1,0 +1,167 @@
+---
+title: Reading the PHP that agents write
+date: '2026-10-29'
+excerpt: Agents write PHP faster than anyone can review it, and reviewing means following calls. PHPlumb is a code navigation engine built for that loop. It is fast on 40,000-file projects, it follows types through Drupal's service container, and it stays silent when it is not sure.
+tags: ['php', 'drupal', 'symfony', 'ai', 'tooling']
+---
+
+<script>
+	import Video from '$lib/components/Video.svelte';
+</script>
+
+Most of the PHP I deal with these days is not written by me. An agent writes it, quickly and in large amounts, and my part of the job is to read it and decide whether it is right.
+
+Reading code is a different activity from writing it. When I review a change, the diff tells me what moved, not whether it works. To know that I have to follow the code: from a call to the method it lands on, from an interface to the class that actually runs, from a method to every place that calls it, from a service id to its definition. Review is navigation, repeated hundreds of times.
+
+That is the loop [PHPlumb](https://github.com/lussoluca/phplumb) is built for. It is a code navigation engine for PHP, written in Rust, with thin extensions for VS Code and Zed, and it does one thing: it takes you to the right place in the code, without waiting, in projects of 40,000 files.
+
+<Video
+	src="/videos/posts/phplumb/demo.mp4"
+	poster="/videos/posts/phplumb/demo.jpg"
+	caption="PHPlumb on Drupal core: Cmd+click an entity type id to open its declaration, find all 774 references of load(), follow a call on \Drupal::service('renderer') into Renderer::render(), and open the service definition in core.services.yml."
+	wide
+/>
+
+## Why the usual tools were not enough
+
+I started with the obvious setup: VS Code and the PHP extensions everybody uses. On a large Drupal project it breaks down in three places.
+
+- **Indexing is slow.** A Drupal site with its `vendor` directory, core and contrib is easily 40,000 to 50,000 PHP files. Waiting for the index means waiting to start the review.
+- **The free tier of Intelephense has no "find implementations".** Drupal calls almost everything through interfaces, so go to definition usually lands on an interface method with no body. The next question, which class actually runs, has no answer.
+- **The type is lost at the container.** `\Drupal::service('renderer')` returns whatever the container holds, so a Cmd+click on the method called on it goes nowhere. The same happens after `getStorage('node')` and after every plugin manager, which on Drupal code covers a large part of the objects you meet.
+
+These tools are designed to help you write code. Autocomplete, refactoring and formatting matter when you type. When you read, the features that matter are going to the right place and finding every caller, and those are the ones that broke.
+
+## Where agents go wrong
+
+There is a second reason review needs better navigation, and it is specific to agents. An agent rarely writes code that looks wrong. It writes code that looks right and calls something that does not exist:
+
+```php
+$this->messenger->addSuccess($this->t('Import completed.'));
+```
+
+That line reads perfectly. Drupal's `MessengerInterface` has `addStatus()`, `addError()` and `addWarning()`, but no `addSuccess()`, and nothing tells you until the line runs. Plausible names are exactly what a language model is good at producing. A service id with a typo, a route renamed two refactorings ago, a plugin id remembered from another project: all of them look fine in a diff.
+
+So the second job of the tool is to point at the names that lead nowhere.
+
+## Three rules before any feature
+
+The design of PHPlumb starts from three anti-goals: things that would make it a failure even if every feature on the list worked.
+
+**A wrong jump is worse than no jump.** During a review I trust the destination of a Cmd+click. If the tool guesses and sends me to the `load()` of the wrong class because the name matches, I review the wrong code and approve the change. So results come only from resolved types, never from matching a method name. When the type of the receiver cannot be known, PHPlumb returns nothing. When it is a union, it returns one target per member, which is an answer, not a guess.
+
+**A false alarm is worse than a missed one.** Diagnostics that cry wolf get ignored within a day, and the real ones get ignored with them. PHPlumb flags a name only when it is certain the name exists nowhere. A method is reported only when no class compatible with the receiver declares it: the receiver's class, its ancestors and every subtype. A `__call()` method, a `@method` tag or a `class_exists()` guard around the code is enough to keep it quiet. A warning on working code is a bug.
+
+**The editor stays light.** Indexing must not make VS Code sluggish or exhaust the memory of the machine.
+
+These rules explain most of what follows, including what PHPlumb deliberately does not do.
+
+## What it does
+
+The core works on any PHP project:
+
+- **Go to definition** for classes, interfaces, traits, enums, functions, methods, properties, constants and enum cases, through type inference and PHPDoc types. Names inside docblocks work too.
+- **Find implementations** of an interface, an abstract class or a method, transitively.
+- **Find all references**, including calls made through the interface or the parent method that a method implements. On Drupal code, without these, the list of callers of most methods would be nearly empty.
+- **Call hierarchy** with incoming and outgoing calls, and **type hierarchy** with supertypes and subtypes.
+- **Hover** with the resolved type, the signature and the docblock.
+- **Symbol search** across the workspace, and the outline of the current file.
+- **Broken reference diagnostics** for classes, functions, methods and constants that exist nowhere, in project code.
+
+The `addSuccess()` line from the previous section gets this:
+
+```text
+Undefined method 'Drupal\\Core\\Messenger\\MessengerInterface::addSuccess()'
+```
+
+Types also go through PHP's built-in classes, read from JetBrains' [phpstorm-stubs](https://github.com/JetBrains/phpstorm-stubs), so `$exception->getMessage()` or `$date->format()` lead to a declaration and navigation continues on the next call. They go through collections too: a `foreach` over a Doctrine `Collection<int, Post>`, an untyped closure passed to `array_map()`, or `$items[$id]` on an `array<string, Item>` keeps the element type.
+
+## Keeping up with the agent
+
+Agents do not edit files through the editor. They write to disk, often many files at once, and then I switch branch to review something else. PHPlumb watches the disk and follows those changes without me opening the files.
+
+On the Drupal project I use as a reference, a single changed file shows up in navigation in about 100 ms, and a batch of 1,000 changed files in about a quarter of a second. The index is cached, so reopening a project only parses what changed.
+
+## Drupal, where navigation used to stop
+
+PHPlumb started with Drupal, because Drupal is where the other tools give up first. Its code reaches almost everything through the service container, entity storage, plugin managers and hooks, and each of those starts from a string the tool has to understand.
+
+Take this code from Drupal core:
+
+```php
+$storage = \\\\Drupal::entityTypeManager()->getStorage('node');
+$node = $storage->load($nid);
+// ...
+$message .= \\\\Drupal::service('renderer')->render($item_list);
+```
+
+PHPlumb knows that `$storage` is a `NodeStorage`, because it read the declaration of the `node` entity type, and that `$node` is a `Node`. It knows that `\Drupal::service('renderer')` is a `Renderer`, because it read every `*.services.yml` on disk, so Cmd+click on `render()` opens `Renderer::render()`. The strings work too: Cmd+click on `'node'` opens the entity type declaration, and on `'renderer'` opens its definition in `core.services.yml`.
+
+The rest of the Drupal module follows the same idea:
+
+- **Hooks.** A `#[Hook]` method or a procedural `mymodule_form_alter()` leads to the places that invoke the hook and to its `hook_*` documentation. From `invokeAll('cron')` or `alter('form')` you get every implementation. Hooks invoked under computed names, such as `hook_form_FORM_ID_alter` or `hook_ENTITY_TYPE_presave`, lead to the core code that computes the name.
+- **Plugins.** A plugin id opens its class: `'#type' => 'textfield'`, `BaseFieldDefinition::create('string')`, widget and formatter types, constraint names and `createInstance('id')`. Go to implementations on a plugin manager lists all its plugins, found by attribute or annotation the way Drupal discovers them.
+- **Routes and YAML.** `Url::fromRoute('name')` and its siblings open the route in `*.routing.yml`. In services, routing and links YAML files, classes, controllers, `@service` references and route names open their definitions.
+- **Annotations.** `@Block(...)`, `@Translation(...)` and other plugin annotations lead to their annotation class.
+- **Broken Drupal references.** A service id, route name or plugin id defined nowhere on disk is reported. Ids built at run time, and lookups that tolerate a missing id, stay silent.
+
+Some details exist only because of the first rule. Inside `vendor`, only the code that Composer's autoloader reaches is indexed, so a package's tests or a leftover copy of a library never show up as a target. `.module`, `.inc`, `.install` and `.theme` files are indexed as PHP. Diagnostics skip core and contrib, and they are tested against them for false alarms.
+
+On the reference project, PHPlumb resolves the target of about 94% of the member accesses in custom modules. The other 6% return nothing, on purpose.
+
+## Symfony
+
+Symfony support came next, for the Symfony projects I review. It turns on when `composer.lock` requires `symfony/framework-bundle`, and it follows the strings that matter in an application built on autowiring and attributes:
+
+- **Routes.** `redirectToRoute()`, `generateUrl()`, and `path()` and `url()` in Twig open the `#[Route]` controller method or the route in `config/routes.yaml`.
+- **Templates.** `render()`, `#[Template]` and the Twig `extends`, `include`, `embed` and `use` tags open the Twig file, including namespaces from `twig.paths`.
+- **Messenger.** `$bus->dispatch(new Message())` lists every handler of the message, and a handler lists every place that dispatches it.
+- **Parameters.** `#[Autowire(param: 'x')]`, `getParameter('x')` and `%x%` in YAML open the definition under `parameters:`.
+- **YAML configuration.** Class names and `@id` references in `config/services*.yaml` and `config/packages/*.yaml` open the class or the service definition.
+- **Doctrine.** Classes and fields in `*.orm.xml` mappings open their declarations, and `getRepository(X::class)` is typed as the repository class the mapping declares.
+- **Broken references.** Route, template and parameter names defined nowhere are flagged in PHP, Twig and YAML, and stay silent whenever a source that could define them cannot be read.
+
+On the Symfony reference project, 99% of the member accesses in `src` resolve. When a Drupal codebase sits inside a Symfony application, each module reads only the folder of its own `composer.lock`, so a Symfony controller never shows up as a Drupal route.
+
+## Fast enough not to notice
+
+Measured on a Drupal 11 project with 39,417 PHP files, on an Apple M3 Pro:
+
+| Task                                                    | Time          |
+| ------------------------------------------------------- | ------------- |
+| Index the whole project from scratch                    | 2 to 4 s      |
+| Start again from the cache                              | 1.7 s         |
+| Find 1,033 references of `EntityStorageInterface::load` | 100 to 135 ms |
+| Search symbols across the workspace                     | about 30 ms   |
+
+The number that matters most for review is the third one. When "who calls this?" costs a tenth of a second, it is a question you ask every time, instead of one you skip because it takes too long.
+
+The engine uses the parser of [Mago](https://github.com/carthage-software/mago), parses files in parallel, and speaks the Language Server Protocol, so the editor extensions only start it and pass the settings.
+
+## What it does not do
+
+PHPlumb has no autocomplete, signature help, rename or other refactorings, formatting, code actions or debugging. That is not a roadmap, it is the scope: the tool is for reading code. It is not a static analyser either. Beyond names that exist nowhere, that is what PHPStan is for.
+
+In practice, **disable Intelephense and other PHP navigation extensions** in the workspaces where you use PHPlumb, or every result shows up twice.
+
+## Built the way it is meant to be used
+
+PHPlumb is agentic code too. An agent wrote it in four days, in more than 230 commits and about 31,000 lines of Rust, and I chose Rust for indexing speed knowing that I would not read the engine.
+
+What I reviewed instead was behaviour. A written design fixed the goals and the anti-goals above before any code existed, and every step had its own plan. A benchmark runs against the reference projects and checks a set of navigation cases, each with its exact expected result, including the cases where the expected result is nothing. A wrong target fails the run. Every time something jumped to the wrong place in the editor, it became a new case.
+
+That is the same position as reviewing an agent's Drupal module. You cannot read everything, so you decide what correct means, make it checkable, and read where the checks point. PHPlumb is the tool for that last part.
+
+## Trying it
+
+PHPlumb runs on macOS (Apple silicon) and Linux (x64), in VS Code 1.140 or later. Download the `.vsix` for your platform from the [releases page](https://github.com/lussoluca/phplumb/releases) and install it:
+
+```bash
+code --install-extension phplumb-darwin-arm64-0.5.0.vsix
+```
+
+Open a PHP project and the indexing progress appears in the status bar. If the PHP project lives in a subfolder of the workspace, point `phplumb.root` at it. Drupal and Symfony support turn on by themselves when `composer.lock` requires `drupal/core` or `symfony/framework-bundle`.
+
+Since 0.5.0 there is also a Zed extension, contributed by Giuseppe Esposito in [#73](https://github.com/lussoluca/phplumb/pull/73). It is not in Zed's registry yet, so it installs as a dev extension from the `editors/zed` folder.
+
+PHPlumb is young, and if a Cmd+click lands in the wrong place, or a warning shows up on code that works, that is a bug by definition. [Open an issue](https://github.com/lussoluca/phplumb/issues) with the smallest piece of code that reproduces it, and it becomes the next case.
