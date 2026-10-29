@@ -71,7 +71,7 @@ The core works on any PHP project:
 The `addSuccess()` line from the previous section gets this:
 
 ```text
-Undefined method 'Drupal\\Core\\Messenger\\MessengerInterface::addSuccess()'
+Undefined method 'Drupal\Core\Messenger\MessengerInterface::addSuccess()'
 ```
 
 Types also go through PHP's built-in classes, read from JetBrains' [phpstorm-stubs](https://github.com/JetBrains/phpstorm-stubs), so `$exception->getMessage()` or `$date->format()` lead to a declaration and navigation continues on the next call. They go through collections too: a `foreach` over a Doctrine `Collection<int, Post>`, an untyped closure passed to `array_map()`, or `$items[$id]` on an `array<string, Item>` keeps the element type.
@@ -89,10 +89,10 @@ PHPlumb started with Drupal, because Drupal is where the other tools give up fir
 Take this code from Drupal core:
 
 ```php
-$storage = \\\\Drupal::entityTypeManager()->getStorage('node');
+$storage = \Drupal::entityTypeManager()->getStorage('node');
 $node = $storage->load($nid);
 // ...
-$message .= \\\\Drupal::service('renderer')->render($item_list);
+$message .= \Drupal::service('renderer')->render($item_list);
 ```
 
 PHPlumb knows that `$storage` is a `NodeStorage`, because it read the declaration of the `node` entity type, and that `$node` is a `Node`. It knows that `\Drupal::service('renderer')` is a `Renderer`, because it read every `*.services.yml` on disk, so Cmd+click on `render()` opens `Renderer::render()`. The strings work too: Cmd+click on `'node'` opens the entity type declaration, and on `'renderer'` opens its definition in `core.services.yml`.

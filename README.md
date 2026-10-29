@@ -49,8 +49,6 @@ tags: ['drupal', 'php']
 Body text starts here.
 ```
 
-Backslashes inside fenced code blocks have to be doubled (`Drupal\\ai\\Event`), because mdsvex consumes single ones.
-
 Screenshots go in `static/images/posts/<slug>/` and are rendered with the `Figure` component, which frames them, adds a caption and makes them zoomable. Import it in the post before using it:
 
 ```svelte
