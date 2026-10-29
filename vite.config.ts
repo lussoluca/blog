@@ -25,7 +25,8 @@ export default defineConfig({
 					// mdsvex reads the layout from disk, so it needs a real path, not an alias.
 					layout: { _: path.resolve('src/lib/components/PostLayout.svelte') },
 					rehypePlugins: [rehypeSlug],
-					highlight: { alias: { twig: 'html' } }
+					// Plain HTML output: the default @html template literal swallows backslashes in code.
+					highlight: { alias: { twig: 'html' }, optimise: false }
 				})
 			],
 			compilerOptions: {
